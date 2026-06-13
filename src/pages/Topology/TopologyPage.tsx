@@ -5,7 +5,6 @@ import { FilterPanel } from '@/components/Filter/FilterPanel'
 import { useServiceStore } from '@/stores/serviceStore'
 import { useTopologyStore } from '@/stores/topologyStore'
 import { useAlertStore } from '@/stores/alertStore'
-import { initializeMockData } from '@/services/mockDataService'
 import { 
   X, 
   ArrowUpCircle, 
@@ -43,31 +42,18 @@ export function TopologyPage() {
   
   const [showDetailPanel, setShowDetailPanel] = useState(false)
   const [showExportModal, setShowExportModal] = useState(false)
+  const [showImportModal, setShowImportModal] = useState(false)
+  const [importFile, setImportFile] = useState<File | null>(null)
   const [exportOptions, setExportOptions] = useState({
     environment: Environment.PRODUCTION as Environment | 'all',
     domain: 'all' as string,
     onlyCore: false,
     includeAlerts: true,
-    includeChanges: true
+    includeChanges: true,
+    note: '',
+    conclusion: '',
+    risks: ''
   })
-
-  useEffect(() => {
-    const storedData = localStorage.getItem('service-topology-data')
-    if (!storedData || JSON.parse(storedData).services?.length === 0) {
-      const mockData = initializeMockData()
-      useServiceStore.setState({
-        services: mockData.services,
-        interfaces: mockData.interfaces,
-        relations: mockData.relations,
-        changeRecords: mockData.changeRecords
-      })
-      useAlertStore.setState({ alerts: mockData.alerts })
-      saveToStorage()
-    } else {
-      loadFromStorage()
-      useAlertStore.getState().loadFromStorage()
-    }
-  }, [])
 
   useEffect(() => {
     setShowDetailPanel(selectedNodeId !== null)
@@ -161,7 +147,15 @@ export function TopologyPage() {
       : []
 
     const snapshot = {
+      version: '1.0',
+      type: 'topology-snapshot',
       exportTime: new Date().toISOString(),
+      note: exportOptions.note,
+      conclusion: exportOptions.conclusion,
+      risks: exportOptions.risks.split('\n').filter((r) => r.trim()).map((r, i) => ({
+        id: `risk-${i + 1}`,
+        description: r.trim()
+      })),
       filterConditions: {
         environment: exportOptions.environment === 'all' ? '全部' : 
           environments.find((e) => e.value === exportOptions.environment)?.label || '未知',
@@ -246,6 +240,47 @@ export function TopologyPage() {
 
   const handleAddService = () => {
     navigate('/service/new')
+  }
+
+  const handleImportSnapshot = () => {
+    if (!importFile) return
+    
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      try {
+        const snapshot = JSON.parse(e.target?.result as string)
+        
+        if (snapshot.type !== 'topology-snapshot') {
+          alert('无效的快照文件格式')
+          return
+        }
+
+        if (snapshot.services) {
+          useServiceStore.setState({ services: snapshot.services })
+        }
+        if (snapshot.interfaces) {
+          useServiceStore.setState({ interfaces: snapshot.interfaces })
+        }
+        if (snapshot.relations) {
+          useServiceStore.setState({ relations: snapshot.relations })
+        }
+        if (snapshot.recentChanges) {
+          useServiceStore.setState({ changeRecords: snapshot.recentChanges })
+        }
+        if (snapshot.activeAlerts) {
+          useAlertStore.setState({ alerts: snapshot.activeAlerts.map((a: any) => ({ ...a, isResolved: false })) })
+        }
+
+        saveToStorage()
+        useAlertStore.getState().saveToStorage()
+        setShowImportModal(false)
+        setImportFile(null)
+        alert('快照导入成功')
+      } catch (error) {
+        alert('导入失败: ' + (error as Error).message)
+      }
+    }
+    reader.readAsText(importFile)
   }
 
   const serviceAlerts = selectedNodeId 
@@ -459,6 +494,55 @@ export function TopologyPage() {
                 </label>
               </div>
 
+              <div className="border-t border-[#2E4A6F] pt-4 mt-4">
+                <h4 className="text-sm font-medium text-gray-300 mb-3">评审材料信息</h4>
+                
+                <div className="mb-3">
+                  <label className="text-xs text-gray-400 block mb-1">时间点说明</label>
+                  <input
+                    type="text"
+                    placeholder="例如: 2024年Q1架构评审"
+                    value={exportOptions.note}
+                    onChange={(e) => setExportOptions({ ...exportOptions, note: e.target.value })}
+                    className={clsx(
+                      'w-full px-3 py-2 bg-[#2E4A6F]/50 rounded-lg text-white text-sm',
+                      'border border-[#2E4A6F] focus:border-[#00D9FF] focus:outline-none',
+                      'placeholder-gray-500'
+                    )}
+                  />
+                </div>
+
+                <div className="mb-3">
+                  <label className="text-xs text-gray-400 block mb-1">备注结论</label>
+                  <textarea
+                    placeholder="评审结论、建议等..."
+                    value={exportOptions.conclusion}
+                    onChange={(e) => setExportOptions({ ...exportOptions, conclusion: e.target.value })}
+                    className={clsx(
+                      'w-full px-3 py-2 bg-[#2E4A6F]/50 rounded-lg text-white text-sm resize-none',
+                      'border border-[#2E4A6F] focus:border-[#00D9FF] focus:outline-none',
+                      'placeholder-gray-500'
+                    )}
+                    rows={2}
+                  />
+                </div>
+
+                <div className="mb-3">
+                  <label className="text-xs text-gray-400 block mb-1">重点风险摘要（每行一条）</label>
+                  <textarea
+                    placeholder="风险1: xxx&#10;风险2: xxx"
+                    value={exportOptions.risks}
+                    onChange={(e) => setExportOptions({ ...exportOptions, risks: e.target.value })}
+                    className={clsx(
+                      'w-full px-3 py-2 bg-[#2E4A6F]/50 rounded-lg text-white text-sm resize-none',
+                      'border border-[#2E4A6F] focus:border-[#00D9FF] focus:outline-none',
+                      'placeholder-gray-500'
+                    )}
+                    rows={3}
+                  />
+                </div>
+              </div>
+
               <div className="flex gap-3 pt-4 border-t border-[#2E4A6F]">
                 <button
                   onClick={handleExportSnapshot}
@@ -469,7 +553,7 @@ export function TopologyPage() {
                   )}
                 >
                   <FileJson className="w-4 h-4" />
-                  <span>导出快照数据</span>
+                  <span>导出评审材料</span>
                 </button>
                 <button
                   onClick={handleExportImage}
@@ -489,6 +573,70 @@ export function TopologyPage() {
               >
                 取消
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showImportModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-[#1E3A5F] rounded-xl border border-[#2E4A6F] p-6 w-[500px]">
+            <h3 className="text-lg font-semibold text-white mb-4">导入拓扑快照</h3>
+            
+            <div className="space-y-4">
+              <div className="border-2 border-dashed border-[#2E4A6F] rounded-lg p-8 text-center">
+                <input
+                  type="file"
+                  accept=".json"
+                  onChange={(e) => setImportFile(e.target.files?.[0] || null)}
+                  className="hidden"
+                  id="import-file"
+                />
+                <label
+                  htmlFor="import-file"
+                  className="cursor-pointer"
+                >
+                  <FileJson className="w-12 h-12 text-gray-400 mx-auto mb-2" />
+                  <p className="text-gray-300">点击或拖拽文件到此处</p>
+                  <p className="text-xs text-gray-500 mt-1">支持 .json 格式的拓扑快照文件</p>
+                </label>
+              </div>
+
+              {importFile && (
+                <div className="flex items-center justify-between p-3 bg-[#2E4A6F]/50 rounded-lg">
+                  <span className="text-sm text-white">{importFile.name}</span>
+                  <button
+                    onClick={() => setImportFile(null)}
+                    className="text-gray-400 hover:text-[#EF4444]"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+
+              <div className="flex gap-3">
+                <button
+                  onClick={handleImportSnapshot}
+                  disabled={!importFile}
+                  className={clsx(
+                    'flex-1 px-4 py-3 rounded-lg font-medium transition-colors',
+                    importFile
+                      ? 'bg-[#00D9FF] text-[#0A1628] hover:bg-[#00D9FF]/80'
+                      : 'bg-[#2E4A6F] text-gray-500 cursor-not-allowed'
+                  )}
+                >
+                  导入快照
+                </button>
+                <button
+                  onClick={() => {
+                    setShowImportModal(false)
+                    setImportFile(null)
+                  }}
+                  className="px-4 py-3 rounded-lg text-gray-400 hover:text-white transition-colors"
+                >
+                  取消
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -520,6 +668,18 @@ export function TopologyPage() {
           <span>刷新</span>
         </button>
         <button
+          onClick={() => setShowImportModal(true)}
+          className={clsx(
+            'flex items-center gap-2 px-3 py-2 rounded-lg',
+            'bg-[#1E3A5F] text-gray-400 border border-[#1E3A5F]',
+            'hover:text-white hover:border-[#00D9FF]/30',
+            'transition-all duration-200 text-sm'
+          )}
+        >
+          <FileJson className="w-4 h-4" />
+          <span>导入快照</span>
+        </button>
+        <button
           onClick={() => setShowExportModal(true)}
           className={clsx(
             'flex items-center gap-2 px-3 py-2 rounded-lg',
@@ -529,7 +689,7 @@ export function TopologyPage() {
           )}
         >
           <Download className="w-4 h-4" />
-          <span>导出快照</span>
+          <span>导出评审材料</span>
         </button>
       </div>
     </div>

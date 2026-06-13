@@ -368,12 +368,20 @@ export function AlertsPage() {
                     </div>
                   </div>
 
-                  <button
-                    onClick={() => navigate('/topology')}
-                    className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs bg-[#00D9FF]/10 text-[#00D9FF] hover:bg-[#00D9FF]/20"
-                  >
-                    在拓扑图中查看
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => navigate('/topology')}
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs bg-[#00D9FF]/10 text-[#00D9FF] hover:bg-[#00D9FF]/20"
+                    >
+                      在拓扑图中查看
+                    </button>
+                    <button
+                      onClick={() => navigate(`/drilldown/${alert.id}`)}
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs bg-[#EF4444]/10 text-[#EF4444] hover:bg-[#EF4444]/20"
+                    >
+                      故障演练
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
