@@ -11,7 +11,8 @@ import {
   Clock,
   Filter,
   FileDown,
-  ChevronRight
+  ChevronRight,
+  GitBranch
 } from 'lucide-react'
 import { Alert, AlertLevel, ALERT_LEVEL_LABELS, ALERT_LEVEL_COLORS } from '@/types'
 import clsx from 'clsx'
@@ -19,6 +20,7 @@ import clsx from 'clsx'
 export function AlertsPage() {
   const navigate = useNavigate()
   const services = useServiceStore((state) => state.services)
+  const getAffectedServices = useServiceStore((state) => state.getAffectedServices)
   const alerts = useAlertStore((state) => state.alerts)
   const resolveAlert = useAlertStore((state) => state.resolveAlert)
   const selectNode = useTopologyStore((state) => state.selectNode)
@@ -58,21 +60,10 @@ export function AlertsPage() {
     return services.find((s) => s.id === serviceId)?.name || '未知服务'
   }
 
-  const getAffectedServices = (alert: Alert): string[] => {
-    const service = services.find((s) => s.id === alert.serviceId)
-    if (!service) return []
-
-    const relations = useServiceStore.getState().relations
-    const downstreamIds = relations
-      .filter((r) => r.upstreamServiceId === alert.serviceId)
-      .map((r) => r.downstreamServiceId)
-    
-    return [service.id, ...downstreamIds]
-  }
-
   const handleAlertClick = (alert: Alert) => {
     setSelectedAlertId(alert.id)
-    const affectedIds = getAffectedServices(alert)
+    const affectedServices = getAffectedServices(alert.serviceId)
+    const affectedIds = affectedServices.map((s) => s.id)
     highlightNodes(affectedIds)
     selectNode(alert.serviceId)
   }
@@ -86,32 +77,62 @@ export function AlertsPage() {
     const unresolvedAlerts = alerts.filter((a) => !a.isResolved)
     const impactData = unresolvedAlerts.map((alert) => {
       const service = services.find((s) => s.id === alert.serviceId)
-      const affectedServices = getAffectedServices(alert)
+      const affectedServices = getAffectedServices(alert.serviceId)
       return {
         alert: {
+          id: alert.id,
           title: alert.title,
           level: ALERT_LEVEL_LABELS[alert.level],
           message: alert.message,
-          time: alert.alertTime
+          alertTime: alert.alertTime,
+          formattedTime: new Date(alert.alertTime).toLocaleString()
         },
-        service: service?.name,
-        affectedServices: affectedServices.map((id) => getServiceName(id))
+        service: {
+          id: service?.id || '',
+          name: service?.name || '未知服务',
+          domain: service?.domain || '',
+          owner: service?.owner || '',
+          status: service?.status || ''
+        },
+        affectedServices: affectedServices.map((s) => ({
+          id: s.id,
+          name: s.name,
+          domain: s.domain,
+          isCore: s.isCore,
+          status: s.status
+        })),
+        impactChain: generateImpactChain(alert.serviceId)
       }
     })
 
-    const blob = new Blob([JSON.stringify(impactData, null, 2)], { type: 'application/json' })
+    const exportData = {
+      exportTime: new Date().toISOString(),
+      totalAlerts: unresolvedAlerts.length,
+      criticalCount: alertStats.critical,
+      errorCount: alertStats.error,
+      warningCount: alertStats.warning,
+      impacts: impactData
+    }
+
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' })
     const link = document.createElement('a')
     link.download = `fault-impact-${new Date().toISOString().split('T')[0]}.json`
     link.href = URL.createObjectURL(blob)
     link.click()
   }
 
+  const generateImpactChain = (serviceId: string): string[] => {
+    const affectedServices = getAffectedServices(serviceId)
+    const serviceNames = affectedServices.map((s) => s.name)
+    return serviceNames
+  }
+
   const levelFilters: { value: AlertLevel | null; label: string; color?: string }[] = [
     { value: null, label: '全部' },
-    { value: 'critical', label: '严重', color: '#DC2626' },
-    { value: 'error', label: '错误', color: '#EF4444' },
-    { value: 'warning', label: '警告', color: '#F59E0B' },
-    { value: 'info', label: '信息', color: '#3B82F6' }
+    { value: AlertLevel.CRITICAL, label: '严重', color: '#DC2626' },
+    { value: AlertLevel.ERROR, label: '错误', color: '#EF4444' },
+    { value: AlertLevel.WARNING, label: '警告', color: '#F59E0B' },
+    { value: AlertLevel.INFO, label: '信息', color: '#3B82F6' }
   ]
 
   return (
@@ -216,7 +237,7 @@ export function AlertsPage() {
         {filteredAlerts.map((alert) => {
           const isSelected = selectedAlertId === alert.id
           const service = services.find((s) => s.id === alert.serviceId)
-          const affectedServices = getAffectedServices(alert)
+          const affectedServices = getAffectedServices(alert.serviceId)
 
           return (
             <div 
@@ -295,27 +316,55 @@ export function AlertsPage() {
                   <div className="text-sm text-gray-300 mb-3">{alert.message}</div>
                   
                   <div className="mb-3">
-                    <div className="text-xs text-gray-400 mb-2">影响范围 ({affectedServices.length} 个服务)</div>
+                    <div className="flex items-center gap-2 text-xs text-gray-400 mb-2">
+                      <GitBranch className="w-3 h-3" />
+                      <span>影响范围 ({affectedServices.length} 个服务)</span>
+                    </div>
                     <div className="flex flex-wrap gap-2">
-                      {affectedServices.map((serviceId) => {
-                        const svc = services.find((s) => s.id === serviceId)
-                        return (
-                          <button
-                            key={serviceId}
-                            onClick={() => navigate(`/service/${serviceId}`)}
-                            className={clsx(
-                              'flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs',
-                              serviceId === alert.serviceId
-                                ? 'bg-[#EF4444]/10 text-[#EF4444] border border-[#EF4444]/30'
-                                : 'bg-[#2E4A6F] text-white hover:bg-[#3E5A7F]'
-                            )}
-                          >
-                            <Server className="w-3 h-3" />
-                            {svc?.name || '未知'}
-                            {svc?.isCore && <span className="text-[#F59E0B]">★</span>}
-                          </button>
-                        )
-                      })}
+                      {affectedServices.map((svc) => (
+                        <button
+                          key={svc.id}
+                          onClick={() => navigate(`/service/${svc.id}`)}
+                          className={clsx(
+                            'flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs',
+                            svc.id === alert.serviceId
+                              ? 'bg-[#EF4444]/10 text-[#EF4444] border border-[#EF4444]/30'
+                              : 'bg-[#2E4A6F] text-white hover:bg-[#3E5A7F]'
+                          )}
+                        >
+                          <Server className="w-3 h-3" />
+                          {svc.name}
+                          {svc.isCore && <span className="text-[#F59E0B]">★</span>}
+                          {svc.status !== 'normal' && (
+                            <span className={clsx(
+                              'px-1.5 py-0.5 rounded text-[10px]',
+                              svc.status === 'warning' && 'bg-[#F59E0B]/20 text-[#F59E0B]',
+                              svc.status === 'error' && 'bg-[#EF4444]/20 text-[#EF4444]',
+                              svc.status === 'offline' && 'bg-gray-500/20 text-gray-400'
+                            )}>
+                              {svc.status === 'warning' ? '⚠' : svc.status === 'error' ? '✗' : '○'}
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="mb-3">
+                    <div className="text-xs text-gray-400 mb-2">影响链路</div>
+                    <div className="flex items-center gap-1 text-xs text-gray-300">
+                      {affectedServices.map((svc, index) => (
+                        <span key={svc.id}>
+                          <span className={clsx(
+                            svc.id === alert.serviceId ? 'text-[#EF4444]' : 'text-gray-300'
+                          )}>
+                            {svc.name}
+                          </span>
+                          {index < affectedServices.length - 1 && (
+                            <span className="mx-1 text-[#00D9FF]">→</span>
+                          )}
+                        </span>
+                      ))}
                     </div>
                   </div>
 

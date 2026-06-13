@@ -10,7 +10,7 @@ interface ServiceNodeData extends Service {
 }
 
 function ServiceNode({ data, selected }: NodeProps) {
-  const serviceData = data as ServiceNodeData
+  const serviceData = data as unknown as ServiceNodeData
   const highlightedNodes = useTopologyStore((state) => state.highlightedNodes)
   const selectNode = useTopologyStore((state) => state.selectNode)
   

@@ -30,6 +30,7 @@ interface ServiceState {
   getUpstreamServices: (serviceId: string) => Service[]
   getDownstreamServices: (serviceId: string) => Service[]
   getServiceInterfaces: (serviceId: string) => ServiceInterface[]
+  getAffectedServices: (serviceId: string) => Service[]
 }
 
 const STORAGE_KEY = 'service-topology-data'
@@ -167,5 +168,27 @@ export const useServiceStore = create<ServiceState>((set, get) => ({
   getServiceInterfaces: (serviceId) => {
     const state = get()
     return state.interfaces.filter((i) => i.serviceId === serviceId)
+  },
+  
+  getAffectedServices: (serviceId) => {
+    const state = get()
+    const affectedIds = new Set<string>([serviceId])
+    
+    const getDownstream = (currentId: string) => {
+      const downstreamIds = state.relations
+        .filter((r) => r.upstreamServiceId === currentId)
+        .map((r) => r.downstreamServiceId)
+      
+      downstreamIds.forEach((id) => {
+        if (!affectedIds.has(id)) {
+          affectedIds.add(id)
+          getDownstream(id)
+        }
+      })
+    }
+    
+    getDownstream(serviceId)
+    
+    return state.services.filter((s) => affectedIds.has(s.id))
   }
 }))

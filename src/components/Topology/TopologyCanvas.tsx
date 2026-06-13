@@ -25,7 +25,7 @@ const edgeTypes = { dependency: DependencyEdge }
 const dagreGraph = new dagre.graphlib.Graph()
 dagreGraph.setDefaultEdgeLabel(() => ({}))
 
-const getLayoutedElements = (nodes: Node[], edges: Edge[]) => {
+const getLayoutedElements = (nodes: any[], edges: any[]) => {
   dagreGraph.setGraph({ rankdir: 'TB', nodesep: 100, ranksep: 150, marginx: 50, marginy: 50 })
 
   nodes.forEach((node) => {
@@ -63,16 +63,16 @@ export function TopologyCanvas({ onNodeClick }: TopologyCanvasProps) {
   const highlightedNodes = useTopologyStore((state) => state.highlightedNodes)
   const selectNode = useTopologyStore((state) => state.selectNode)
 
-  const initialNodes: Node[] = useMemo(() => {
+  const initialNodes = useMemo(() => {
     return services.map((service: Service) => ({
       id: service.id,
-      type: 'service',
-      data: service,
+      type: 'service' as const,
+      data: service as unknown as Record<string, unknown>,
       position: { x: 0, y: 0 }
     }))
   }, [services])
 
-  const initialEdges: Edge[] = useMemo(() => {
+  const initialEdges = useMemo(() => {
     const filteredServiceIds = services.map((s) => s.id)
     return relations
       .filter((r: ServiceRelation) => 
@@ -83,8 +83,8 @@ export function TopologyCanvas({ onNodeClick }: TopologyCanvasProps) {
         id: relation.id,
         source: relation.upstreamServiceId,
         target: relation.downstreamServiceId,
-        type: 'dependency',
-        data: relation
+        type: 'dependency' as const,
+        data: relation as unknown as Record<string, unknown>
       }))
   }, [relations, services])
 

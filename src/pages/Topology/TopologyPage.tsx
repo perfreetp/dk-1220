@@ -6,13 +6,29 @@ import { useServiceStore } from '@/stores/serviceStore'
 import { useTopologyStore } from '@/stores/topologyStore'
 import { useAlertStore } from '@/stores/alertStore'
 import { initializeMockData } from '@/services/mockDataService'
-import { X, ArrowUpCircle, ArrowDownCircle, Star, Download, FileJson, Image } from 'lucide-react'
+import { 
+  X, 
+  ArrowUpCircle, 
+  ArrowDownCircle, 
+  Star, 
+  Download, 
+  FileJson, 
+  Image,
+  RefreshCw,
+  Plus,
+  Clock,
+  AlertTriangle
+} from 'lucide-react'
 import clsx from 'clsx'
 import html2canvas from 'html2canvas'
+import { Environment } from '@/types'
 
 export function TopologyPage() {
   const navigate = useNavigate()
   const services = useServiceStore((state) => state.services)
+  const interfaces = useServiceStore((state) => state.interfaces)
+  const relations = useServiceStore((state) => state.relations)
+  const changeRecords = useServiceStore((state) => state.changeRecords)
   const selectedNodeId = useTopologyStore((state) => state.selectedNodeId)
   const highlightedNodes = useTopologyStore((state) => state.highlightedNodes)
   const selectNode = useTopologyStore((state) => state.selectNode)
@@ -27,6 +43,13 @@ export function TopologyPage() {
   
   const [showDetailPanel, setShowDetailPanel] = useState(false)
   const [showExportModal, setShowExportModal] = useState(false)
+  const [exportOptions, setExportOptions] = useState({
+    environment: Environment.PRODUCTION as Environment | 'all',
+    domain: 'all' as string,
+    onlyCore: false,
+    includeAlerts: true,
+    includeChanges: true
+  })
 
   useEffect(() => {
     const storedData = localStorage.getItem('service-topology-data')
@@ -53,6 +76,15 @@ export function TopologyPage() {
   const selectedService = services.find((s) => s.id === selectedNodeId)
   const upstreamServices = selectedNodeId ? getUpstreamServices(selectedNodeId) : []
   const downstreamServices = selectedNodeId ? getDownstreamServices(selectedNodeId) : []
+
+  const domains = [...new Set(services.map((s) => s.domain))]
+  const environments = [
+    { value: 'all' as const, label: '全部环境' },
+    { value: Environment.PRODUCTION, label: '生产环境' },
+    { value: Environment.STAGING, label: '预发环境' },
+    { value: Environment.TESTING, label: '测试环境' },
+    { value: Environment.DEVELOPMENT, label: '开发环境' }
+  ]
 
   const handleClosePanel = () => {
     selectNode(null)
@@ -88,16 +120,120 @@ export function TopologyPage() {
     setShowExportModal(false)
   }
 
-  const handleExportJson = () => {
-    const data = {
-      services: useServiceStore.getState().services,
-      interfaces: useServiceStore.getState().interfaces,
-      relations: useServiceStore.getState().relations,
-      exportTime: new Date().toISOString()
+  const handleExportSnapshot = () => {
+    let filteredServices = services
+    let filteredRelations = relations
+    let filteredInterfaces = interfaces
+
+    if (exportOptions.environment !== 'all') {
+      filteredServices = filteredServices.filter((s) => s.environment === exportOptions.environment)
+      const serviceIds = filteredServices.map((s) => s.id)
+      filteredRelations = filteredRelations.filter(
+        (r) => serviceIds.includes(r.upstreamServiceId) && serviceIds.includes(r.downstreamServiceId)
+      )
+      filteredInterfaces = filteredInterfaces.filter((i) => serviceIds.includes(i.serviceId))
     }
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+
+    if (exportOptions.domain !== 'all') {
+      filteredServices = filteredServices.filter((s) => s.domain === exportOptions.domain)
+      const serviceIds = filteredServices.map((s) => s.id)
+      filteredRelations = filteredRelations.filter(
+        (r) => serviceIds.includes(r.upstreamServiceId) && serviceIds.includes(r.downstreamServiceId)
+      )
+      filteredInterfaces = filteredInterfaces.filter((i) => serviceIds.includes(i.serviceId))
+    }
+
+    if (exportOptions.onlyCore) {
+      filteredServices = filteredServices.filter((s) => s.isCore)
+      const serviceIds = filteredServices.map((s) => s.id)
+      filteredRelations = filteredRelations.filter(
+        (r) => serviceIds.includes(r.upstreamServiceId) && serviceIds.includes(r.downstreamServiceId)
+      )
+      filteredInterfaces = filteredInterfaces.filter((i) => serviceIds.includes(i.serviceId))
+    }
+
+    const abnormalServices = filteredServices.filter((s) => s.status !== 'normal')
+    const recentChanges = exportOptions.includeChanges
+      ? changeRecords.slice(0, 10)
+      : []
+    const activeAlerts = exportOptions.includeAlerts
+      ? alerts.filter((a) => !a.isResolved && filteredServices.some((s) => s.id === a.serviceId))
+      : []
+
+    const snapshot = {
+      exportTime: new Date().toISOString(),
+      filterConditions: {
+        environment: exportOptions.environment === 'all' ? '全部' : 
+          environments.find((e) => e.value === exportOptions.environment)?.label || '未知',
+        domain: exportOptions.domain === 'all' ? '全部' : exportOptions.domain,
+        onlyCore: exportOptions.onlyCore,
+        includeAlerts: exportOptions.includeAlerts,
+        includeChanges: exportOptions.includeChanges
+      },
+      summary: {
+        totalServices: filteredServices.length,
+        coreServices: filteredServices.filter((s) => s.isCore).length,
+        abnormalServices: abnormalServices.length,
+        totalInterfaces: filteredInterfaces.length,
+        totalRelations: filteredRelations.length,
+        activeAlerts: activeAlerts.length,
+        recentChanges: recentChanges.length
+      },
+      services: filteredServices.map((s) => ({
+        id: s.id,
+        name: s.name,
+        domain: s.domain,
+        environment: s.environment,
+        status: s.status,
+        isCore: s.isCore,
+        owner: s.owner,
+        description: s.description
+      })),
+      interfaces: filteredInterfaces.map((i) => ({
+        id: i.id,
+        serviceId: i.serviceId,
+        name: i.name,
+        path: i.path,
+        method: i.method
+      })),
+      relations: filteredRelations.map((r) => ({
+        id: r.id,
+        upstreamServiceId: r.upstreamServiceId,
+        downstreamServiceId: r.downstreamServiceId,
+        callType: r.callType,
+        callFrequency: r.callFrequency
+      })),
+      abnormalServices: abnormalServices.map((s) => ({
+        id: s.id,
+        name: s.name,
+        domain: s.domain,
+        status: s.status,
+        owner: s.owner
+      })),
+      activeAlerts: activeAlerts.map((a) => ({
+        id: a.id,
+        serviceId: a.serviceId,
+        serviceName: filteredServices.find((s) => s.id === a.serviceId)?.name || '未知',
+        title: a.title,
+        level: a.level,
+        message: a.message,
+        alertTime: a.alertTime
+      })),
+      recentChanges: recentChanges.map((c) => ({
+        id: c.id,
+        serviceId: c.serviceId,
+        serviceName: filteredServices.find((s) => s.id === c.serviceId)?.name || '未知',
+        changeType: c.changeType,
+        title: c.title,
+        content: c.content,
+        operator: c.operator,
+        changeTime: c.changeTime
+      }))
+    }
+
+    const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: 'application/json' })
     const link = document.createElement('a')
-    link.download = `topology-${new Date().toISOString().split('T')[0]}.json`
+    link.download = `topology-snapshot-${new Date().toISOString().split('T')[0]}.json`
     link.href = URL.createObjectURL(blob)
     link.click()
     setShowExportModal(false)
@@ -244,41 +380,145 @@ export function TopologyPage() {
 
       {showExportModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-[#1E3A5F] rounded-xl border border-[#2E4A6F] p-6 w-80">
+          <div className="bg-[#1E3A5F] rounded-xl border border-[#2E4A6F] p-6 w-[500px] max-h-[90vh] overflow-y-auto">
             <h3 className="text-lg font-semibold text-white mb-4">导出拓扑快照</h3>
-            <div className="space-y-3">
+            
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs text-gray-400 block mb-2">选择环境</label>
+                <select
+                  value={exportOptions.environment}
+                  onChange={(e) => setExportOptions({ ...exportOptions, environment: e.target.value as Environment | 'all' })}
+                  className={clsx(
+                    'w-full px-4 py-2 bg-[#2E4A6F]/50 rounded-lg text-white',
+                    'border border-[#2E4A6F] focus:border-[#00D9FF] focus:outline-none'
+                  )}
+                >
+                  {environments.map((env) => (
+                    <option key={env.value} value={env.value}>{env.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs text-gray-400 block mb-2">选择业务域</label>
+                <select
+                  value={exportOptions.domain}
+                  onChange={(e) => setExportOptions({ ...exportOptions, domain: e.target.value })}
+                  className={clsx(
+                    'w-full px-4 py-2 bg-[#2E4A6F]/50 rounded-lg text-white',
+                    'border border-[#2E4A6F] focus:border-[#00D9FF] focus:outline-none'
+                  )}
+                >
+                  <option value="all">全部业务域</option>
+                  {domains.map((domain) => (
+                    <option key={domain} value={domain}>{domain}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={exportOptions.onlyCore}
+                    onChange={(e) => setExportOptions({ ...exportOptions, onlyCore: e.target.checked })}
+                    className="w-4 h-4 rounded border-gray-600 bg-[#2E4A6F] text-[#00D9FF] focus:ring-[#00D9FF]"
+                  />
+                  <span className="text-sm text-gray-300">仅导出核心服务</span>
+                </label>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={exportOptions.includeAlerts}
+                    onChange={(e) => setExportOptions({ ...exportOptions, includeAlerts: e.target.checked })}
+                    className="w-4 h-4 rounded border-gray-600 bg-[#2E4A6F] text-[#00D9FF] focus:ring-[#00D9FF]"
+                  />
+                  <span className="text-sm text-gray-300 flex items-center gap-1">
+                    <AlertTriangle className="w-3 h-3 text-[#EF4444]" />
+                    包含当前告警
+                  </span>
+                </label>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={exportOptions.includeChanges}
+                    onChange={(e) => setExportOptions({ ...exportOptions, includeChanges: e.target.checked })}
+                    className="w-4 h-4 rounded border-gray-600 bg-[#2E4A6F] text-[#00D9FF] focus:ring-[#00D9FF]"
+                  />
+                  <span className="text-sm text-gray-300 flex items-center gap-1">
+                    <Clock className="w-3 h-3 text-[#00D9FF]" />
+                    包含最近变更记录
+                  </span>
+                </label>
+              </div>
+
+              <div className="flex gap-3 pt-4 border-t border-[#2E4A6F]">
+                <button
+                  onClick={handleExportSnapshot}
+                  className={clsx(
+                    'flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg',
+                    'bg-[#00D9FF] text-[#0A1628] font-medium',
+                    'hover:bg-[#00D9FF]/80 transition-colors'
+                  )}
+                >
+                  <FileJson className="w-4 h-4" />
+                  <span>导出快照数据</span>
+                </button>
+                <button
+                  onClick={handleExportImage}
+                  className={clsx(
+                    'flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg',
+                    'bg-[#2E4A6F] text-white hover:bg-[#3E5A7F] transition-colors'
+                  )}
+                >
+                  <Image className="w-4 h-4 text-[#00D9FF]" />
+                  <span>导出图片</span>
+                </button>
+              </div>
+
               <button
-                onClick={handleExportImage}
-                className={clsx(
-                  'w-full flex items-center gap-3 px-4 py-3 rounded-lg',
-                  'bg-[#2E4A6F] text-white hover:bg-[#3E5A7F] transition-colors'
-                )}
+                onClick={() => setShowExportModal(false)}
+                className="w-full py-2 rounded-lg text-gray-400 hover:text-white transition-colors"
               >
-                <Image className="w-5 h-5 text-[#00D9FF]" />
-                <span>导出为图片 (PNG)</span>
-              </button>
-              <button
-                onClick={handleExportJson}
-                className={clsx(
-                  'w-full flex items-center gap-3 px-4 py-3 rounded-lg',
-                  'bg-[#2E4A6F] text-white hover:bg-[#3E5A7F] transition-colors'
-                )}
-              >
-                <FileJson className="w-5 h-5 text-[#00D9FF]" />
-                <span>导出为数据 (JSON)</span>
+                取消
               </button>
             </div>
-            <button
-              onClick={() => setShowExportModal(false)}
-              className="w-full mt-4 py-2 rounded-lg text-gray-400 hover:text-white transition-colors"
-            >
-              取消
-            </button>
           </div>
         </div>
       )}
 
       <div className="fixed top-20 right-6 flex gap-2">
+        <button
+          onClick={handleAddService}
+          className={clsx(
+            'flex items-center gap-2 px-3 py-2 rounded-lg',
+            'bg-[#00D9FF] text-[#0A1628] font-medium',
+            'hover:bg-[#00D9FF]/80',
+            'transition-all duration-200 text-sm'
+          )}
+        >
+          <Plus className="w-4 h-4" />
+          <span>新增服务</span>
+        </button>
+        <button
+          onClick={handleRefresh}
+          className={clsx(
+            'flex items-center gap-2 px-3 py-2 rounded-lg',
+            'bg-[#1E3A5F] text-gray-400 border border-[#1E3A5F]',
+            'hover:text-white hover:border-[#00D9FF]/30',
+            'transition-all duration-200 text-sm'
+          )}
+        >
+          <RefreshCw className="w-4 h-4" />
+          <span>刷新</span>
+        </button>
         <button
           onClick={() => setShowExportModal(true)}
           className={clsx(

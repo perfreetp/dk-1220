@@ -5,15 +5,22 @@ import {
   Server, 
   Plus, 
   Save, 
-  Star,
-  ArrowLeft
+  Star, 
+  ArrowLeft,
+  Code,
+  Link2,
+  Trash2,
+  ChevronDown
 } from 'lucide-react'
-import { Service, ServiceStatus, Environment } from '@/types'
+import { Service, ServiceInterface, ServiceRelation, ServiceStatus, Environment } from '@/types'
 import clsx from 'clsx'
 
 export function ServiceFormPage() {
   const navigate = useNavigate()
+  const services = useServiceStore((state) => state.services)
   const addService = useServiceStore((state) => state.addService)
+  const addInterface = useServiceStore((state) => state.addInterface)
+  const addRelation = useServiceStore((state) => state.addRelation)
   const saveToStorage = useServiceStore((state) => state.saveToStorage)
   
   const [formData, setFormData] = useState({
@@ -25,6 +32,11 @@ export function ServiceFormPage() {
     isCore: false,
     description: ''
   })
+
+  const [interfaces, setInterfaces] = useState<Omit<ServiceInterface, 'id' | 'serviceId'>[]>([])
+  const [relations, setRelations] = useState<{ upstreamServiceId: string; callType: 'sync' | 'async' }[]>([])
+  const [showRelationDropdown, setShowRelationDropdown] = useState(false)
+  const [selectedUpstream, setSelectedUpstream] = useState('')
 
   const environments = [
     { value: Environment.DEVELOPMENT, label: '开发环境' },
@@ -40,14 +52,54 @@ export function ServiceFormPage() {
     { value: ServiceStatus.OFFLINE, label: '离线', color: '#6B7280' }
   ]
 
+  const availableUpstreamServices = services.filter((s) => s.id !== formData.name)
+
+  const handleAddInterface = () => {
+    setInterfaces([...interfaces, {
+      name: '',
+      path: '',
+      method: 'GET',
+      description: ''
+    }])
+  }
+
+  const handleUpdateInterface = (index: number, field: string, value: string) => {
+    const updated = [...interfaces]
+    updated[index] = { ...updated[index], [field]: value }
+    setInterfaces(updated)
+  }
+
+  const handleRemoveInterface = (index: number) => {
+    setInterfaces(interfaces.filter((_, i) => i !== index))
+  }
+
+  const handleAddRelation = () => {
+    if (selectedUpstream) {
+      setRelations([...relations, { upstreamServiceId: selectedUpstream, callType: 'sync' }])
+      setSelectedUpstream('')
+      setShowRelationDropdown(false)
+    }
+  }
+
+  const handleUpdateRelationType = (index: number, type: 'sync' | 'async') => {
+    const updated = [...relations]
+    updated[index] = { ...updated[index], callType: type }
+    setRelations(updated)
+  }
+
+  const handleRemoveRelation = (index: number) => {
+    setRelations(relations.filter((_, i) => i !== index))
+  }
+
   const handleSubmit = () => {
     if (!formData.name || !formData.domain || !formData.owner) {
       alert('请填写必填字段：服务名称、业务域、负责人')
       return
     }
 
+    const serviceId = `svc-${Date.now()}`
     const newService: Service = {
-      id: `svc-${Date.now()}`,
+      id: serviceId,
       name: formData.name,
       domain: formData.domain,
       environment: formData.environment,
@@ -60,12 +112,33 @@ export function ServiceFormPage() {
     }
 
     addService(newService)
+
+    interfaces.forEach((intf) => {
+      if (intf.name && intf.path) {
+        addInterface({
+          id: `int-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+          serviceId,
+          ...intf
+        })
+      }
+    })
+
+    relations.forEach((rel) => {
+      addRelation({
+        id: `rel-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+        upstreamServiceId: rel.upstreamServiceId,
+        downstreamServiceId: serviceId,
+        callType: rel.callType,
+        callFrequency: 100
+      })
+    })
+
     saveToStorage()
     navigate('/topology')
   }
 
   return (
-    <div className="max-w-2xl mx-auto">
+    <div className="max-w-4xl mx-auto">
       <div className="mb-6">
         <button
           onClick={() => navigate('/topology')}
@@ -89,7 +162,7 @@ export function ServiceFormPage() {
               >
                 录入新服务
               </h2>
-              <p className="text-sm text-gray-400">添加新的服务到拓扑图中</p>
+              <p className="text-sm text-gray-400">添加新的服务到拓扑图中，可同时配置接口和调用关系</p>
             </div>
           </div>
         </div>
@@ -217,11 +290,165 @@ export function ServiceFormPage() {
                 'border border-[#2E4A6F] focus:border-[#00D9FF] focus:outline-none',
                 'placeholder-gray-500'
               )}
-              rows={4}
+              rows={3}
             />
           </div>
 
-          <div className="flex gap-4 pt-4 border-t border-[#2E4A6F]">
+          <div className="border-t border-[#2E4A6F] pt-6">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Code className="w-4 h-4 text-[#00D9FF]" />
+                <span className="font-medium text-white">接口配置</span>
+              </div>
+              <button
+                onClick={handleAddInterface}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs bg-[#00D9FF]/10 text-[#00D9FF] hover:bg-[#00D9FF]/20"
+              >
+                <Plus className="w-3 h-3" />
+                新增接口
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {interfaces.map((intf, index) => (
+                <div key={index} className="flex gap-3 p-3 bg-[#2E4A6F]/50 rounded-lg">
+                  <select
+                    value={intf.method}
+                    onChange={(e) => handleUpdateInterface(index, 'method', e.target.value)}
+                    className={clsx(
+                      'px-3 py-2 rounded-lg text-sm font-medium',
+                      intf.method === 'GET' && 'bg-[#10B981]/20 text-[#10B981]',
+                      intf.method === 'POST' && 'bg-[#00D9FF]/20 text-[#00D9FF]',
+                      intf.method === 'PUT' && 'bg-[#F59E0B]/20 text-[#F59E0B]',
+                      intf.method === 'DELETE' && 'bg-[#EF4444]/20 text-[#EF4444]',
+                      intf.method === 'PATCH' && 'bg-[#8B5CF6]/20 text-[#8B5CF6]'
+                    )}
+                  >
+                    <option value="GET">GET</option>
+                    <option value="POST">POST</option>
+                    <option value="PUT">PUT</option>
+                    <option value="DELETE">DELETE</option>
+                    <option value="PATCH">PATCH</option>
+                  </select>
+                  <input
+                    type="text"
+                    placeholder="接口名称"
+                    value={intf.name}
+                    onChange={(e) => handleUpdateInterface(index, 'name', e.target.value)}
+                    className="flex-1 px-3 py-2 bg-[#1E3A5F] rounded-lg text-white border border-transparent focus:border-[#00D9FF] focus:outline-none placeholder-gray-500"
+                  />
+                  <input
+                    type="text"
+                    placeholder="/api/path"
+                    value={intf.path}
+                    onChange={(e) => handleUpdateInterface(index, 'path', e.target.value)}
+                    className="flex-1 px-3 py-2 bg-[#1E3A5F] rounded-lg text-white border border-transparent focus:border-[#00D9FF] focus:outline-none placeholder-gray-500"
+                  />
+                  <button
+                    onClick={() => handleRemoveInterface(index)}
+                    className="p-2 rounded-lg text-gray-400 hover:text-[#EF4444] hover:bg-[#EF4444]/10"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+              {interfaces.length === 0 && (
+                <div className="text-center py-4 text-sm text-gray-400">暂无接口配置</div>
+              )}
+            </div>
+          </div>
+
+          <div className="border-t border-[#2E4A6F] pt-6">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Link2 className="w-4 h-4 text-[#00D9FF]" />
+                <span className="font-medium text-white">调用关系（上游服务）</span>
+              </div>
+              <div className="relative">
+                <button
+                  onClick={() => setShowRelationDropdown(!showRelationDropdown)}
+                  className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs bg-[#00D9FF]/10 text-[#00D9FF] hover:bg-[#00D9FF]/20"
+                >
+                  <Plus className="w-3 h-3" />
+                  添加上游依赖
+                  <ChevronDown className={clsx('w-3 h-3', showRelationDropdown && 'rotate-180')} />
+                </button>
+                {showRelationDropdown && availableUpstreamServices.length > 0 && (
+                  <div className="absolute right-0 mt-2 w-48 bg-[#1E3A5F] border border-[#2E4A6F] rounded-lg overflow-hidden z-10">
+                    <input
+                      type="text"
+                      placeholder="搜索服务..."
+                      value={selectedUpstream}
+                      onChange={(e) => setSelectedUpstream(e.target.value)}
+                      className="w-full px-3 py-2 bg-[#2E4A6F]/50 text-white border-b border-[#2E4A6F] placeholder-gray-500 focus:outline-none"
+                    />
+                    {availableUpstreamServices.filter((s) => 
+                      s.name.toLowerCase().includes(selectedUpstream.toLowerCase())
+                    ).map((service) => (
+                      <button
+                        key={service.id}
+                        onClick={() => {
+                          setSelectedUpstream(service.id)
+                          handleAddRelation()
+                        }}
+                        className="w-full px-3 py-2 text-left text-white hover:bg-[#2E4A6F] flex items-center gap-2"
+                      >
+                        <Server className="w-3 h-3" />
+                        {service.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {relations.map((rel, index) => {
+                const upstreamService = services.find((s) => s.id === rel.upstreamServiceId)
+                return (
+                  <div key={index} className="flex items-center gap-3 p-3 bg-[#2E4A6F]/50 rounded-lg">
+                    <Server className="w-4 h-4 text-gray-400" />
+                    <span className="flex-1 text-white">{upstreamService?.name || '未知服务'}</span>
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => handleUpdateRelationType(index, 'sync')}
+                        className={clsx(
+                          'px-2 py-1 rounded text-xs',
+                          rel.callType === 'sync'
+                            ? 'bg-[#10B981]/20 text-[#10B981]'
+                            : 'bg-[#2E4A6F] text-gray-400'
+                        )}
+                      >
+                        同步
+                      </button>
+                      <button
+                        onClick={() => handleUpdateRelationType(index, 'async')}
+                        className={clsx(
+                          'px-2 py-1 rounded text-xs',
+                          rel.callType === 'async'
+                            ? 'bg-[#F59E0B]/20 text-[#F59E0B]'
+                            : 'bg-[#2E4A6F] text-gray-400'
+                        )}
+                      >
+                        异步
+                      </button>
+                    </div>
+                    <button
+                      onClick={() => handleRemoveRelation(index)}
+                      className="p-1.5 rounded-lg text-gray-400 hover:text-[#EF4444] hover:bg-[#EF4444]/10"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                )
+              })}
+              {relations.length === 0 && (
+                <div className="text-center py-4 text-sm text-gray-400">暂无上游依赖</div>
+              )}
+            </div>
+          </div>
+
+          <div className="flex gap-4 pt-6 border-t border-[#2E4A6F]">
             <button
               onClick={handleSubmit}
               className={clsx(
